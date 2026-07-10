@@ -1,0 +1,12 @@
+{
+  "extends": "../../modules/_configs/base.tsconfig.json",
+  "compilerOptions": {
+    "types": ["../../modules/types/Long", "../../modules/types/globals"],
+    "paths": {
+      "tap_counter/*": ["./*"],
+      "valdi_tsx/*": ["../../src/valdi_modules/src/valdi/valdi_tsx/*"],
+      "valdi_core/*": ["../../src/valdi_modules/src/valdi/valdi_core/*"],
+      "valdi_core": ["../../src/valdi_modules/src/valdi/valdi_core/src/tslib.d.ts"]
+    }
+  }
+}

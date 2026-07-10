@@ -1,0 +1,31 @@
+load("@rules_java//java:defs.bzl", "java_runtime")
+
+# A Java runtime toolchain that satisfies @bazel_tools//tools/jdk:runtime_toolchain_type
+# for the ANDROID target platform. Snap's internal .bazelrc registers such a
+# toolchain; it's absent from the open-source checkout, so building a
+# valdi_android_application here fails at the aar's deploy-jar step ("No matching
+# toolchains found for runtime_toolchain_type" on @rules_android//:arm64-v8a) —
+# every stock rules_java remotejdk/local_jdk toolchain is constrained to a host OS
+# (linux/macos/windows) and none matches os:android.
+#
+# This wires the host JDK (an absolute java_home, so no hermetic srcs needed) as
+# the runtime *only* for os:android, so it can never shadow the host toolchains.
+# Opt in with:
+#   --extra_toolchains=//bzl/local_android_java:android_host_java_runtime_toolchain
+# Only needed for local Android app builds / benchmarking (docs live in the
+# universal_ui benchmark). Override the path with --define local_jdk_home=... if
+# your JDK lives elsewhere.
+
+java_runtime(
+    name = "host_java_runtime",
+    java_home = "/opt/homebrew/opt/openjdk@17",
+    visibility = ["//visibility:public"],
+)
+
+toolchain(
+    name = "android_host_java_runtime_toolchain",
+    target_compatible_with = ["@platforms//os:android"],
+    toolchain = ":host_java_runtime",
+    toolchain_type = "@bazel_tools//tools/jdk:runtime_toolchain_type",
+    visibility = ["//visibility:public"],
+)

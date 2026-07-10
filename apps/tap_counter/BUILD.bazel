@@ -1,0 +1,28 @@
+load("//bzl/valdi:valdi_application.bzl", "valdi_application")
+load("//bzl/valdi:valdi_module.bzl", "valdi_module")
+
+# The minimal "Tap me" counter — Valdi's cell of the cross-framework benchmark
+# (universal_ui/docs/benchmarks.md). A single .tsx, no native modules: a counter
+# label + a button, behavior-identical to the native-Compose / compiled-Swift /
+# wasm / React Native twins so the numbers isolate runtime overhead.
+
+valdi_module(
+    name = "tap_counter",
+    srcs = glob([
+        "**/*.ts",
+        "**/*.tsx",
+    ]),
+    visibility = ["//visibility:public"],
+    deps = [
+        "//src/valdi_modules/src/valdi/valdi_core",
+        "//src/valdi_modules/src/valdi/valdi_tsx",
+    ],
+)
+
+valdi_application(
+    name = "tap_counter_app",
+    root_component_path = "App@tap_counter/TapCounter",
+    title = "Tap Counter",
+    version = "1.0.0",
+    deps = [":tap_counter"],
+)
