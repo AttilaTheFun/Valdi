@@ -19,7 +19,16 @@ export class App extends StatefulComponent<object, State> {
   // other cells emit, so tap->update is measured the same way everywhere.
   private tapAt = 0;
 
+  // Startup content signal: the first render pass has produced the native
+  // view tree; the frame presenting it follows. Lets the benchmark verify
+  // "Displayed" against actual JS-rendered content (logcat: [valdi-content]).
+  private firstRenderLogged = false;
+
   onRender(): void {
+    if (!this.firstRenderLogged) {
+      this.firstRenderLogged = true;
+      console.log('[valdi-content] first render');
+    }
     if (this.state.count > 0 && this.tapAt !== 0) {
       console.log(`[valdi-tap] count=${this.state.count} latency=${Date.now() - this.tapAt}ms`);
     }
