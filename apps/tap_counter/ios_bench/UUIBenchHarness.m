@@ -5,21 +5,20 @@
  * DEVICECTL_CHILD_UUI_BENCH=1), writes Documents/bench.json
  * {run, startupMs, launchToContentMs, taps, tapMedianMs, tapMeanMs}.
  *
- * Startup anchor: process start (sysctl p_starttime, dyld included) → the
- * first main-runloop pass whose committed view state contains BOTH the
- * counter label (SCValdiLabel is a UILabel: text prefix "Tapped ") and the
- * #5A57D6 button (observer at order 0).
- *
- * Tap anchor: trigger → detection of the COMPLETE update — the pending
- * window closes only when both the label text AND its frame have changed
- * (the count string changes width, so layout is part of the update; per-tap
- * text+/frame+ provenance is recorded; by detection the label is already
- * drawn, needsDisplay=0 — Valdi commits its own transaction inside its
- * scheduler tick). Detection, not a CATransaction completion: a completion
- * attached from the observer binds to an empty follow-up transaction plus
- * idle-display refresh scheduling — dead wait that isn't framework work.
- * Trigger phase is randomized to avoid phase-locking to the render tick.
- * The trigger invokes the button's SCValdiTapGestureRecognizer
+ * UNIFORM METHODOLOGY (identical to the universal_ui cells' harness):
+ * Startup = PROCESS INIT (sysctl p_starttime, dyld included) → the end of
+ * the CA commit that first contains BOTH the counter label (SCValdiLabel is
+ * a UILabel: text prefix "Tapped ") and the #5A57D6 button — laid out and
+ * handed off to the render server. Tap = trigger receipt → the end of the
+ * CA commit containing the COMPLETE update (both the label text AND its
+ * frame changed: the count string changes width, so layout is part of the
+ * update). Two runloop observers: order 0 detects the mutated view state
+ * ahead of Core Animation's commit observer (order 2,000,000); order
+ * 2,500,000 stamps AFTER that same pass's commit — views re-laid-out and
+ * SUBMITTED for drawing, out of the app's hands. No frame-timing anchors.
+ * Valdi's own internal scheduling (its render tick) is counted; nothing
+ * after the commit handoff is. Trigger phase randomized. The trigger
+ * invokes the button's SCValdiTapGestureRecognizer
  * `triggerAtLocation:forState:` (state = ended) via NSInvocation — the same
  * native→JS→setState→render→native-view round trip a real touch performs.
  *
@@ -56,7 +55,10 @@ static double UUIMsSinceProcessStart(void)
     NSString *_lastLabelText;
     NSInteger _tapsRemaining;
     CFRunLoopObserverRef _observer;
+    CFRunLoopObserverRef _postCommitObserver;
     BOOL _finished;
+    BOOL _contentDetected;
+    CFTimeInterval _updateDetectedFor;
     // Per-tap completeness tracking: the pending window closes only when
     // BOTH the label text and its frame have changed (a text-only anchor can
     // undercount if layout lands in a later pass). Details recorded per tap.
@@ -108,15 +110,52 @@ static UUIBenchHarness *sharedHarness;
     _tapDetails = [NSMutableArray array];
 
     __weak UUIBenchHarness *weakSelf = self;
-    // Order 0 runs before CA's commit observer (2,000,000) in the same
-    // before-waiting pass, so a completion block attached here belongs to the
-    // commit that publishes what we just detected.
+    // Order 0: detection, ahead of CA's commit observer (2,000,000) — the
+    // view state it sees is what that pass's commit will ship.
     _observer = CFRunLoopObserverCreateWithHandler(
         kCFAllocatorDefault, kCFRunLoopBeforeWaiting, true, 0,
         ^(CFRunLoopObserverRef obs, CFRunLoopActivity activity) {
             [weakSelf runLoopTick];
         });
     CFRunLoopAddObserver(CFRunLoopGetMain(), _observer, kCFRunLoopCommonModes);
+    // Order 2,500,000: after CA's synchronous commit in the same pass — the
+    // frame has been handed off when this fires.
+    _postCommitObserver = CFRunLoopObserverCreateWithHandler(
+        kCFAllocatorDefault, kCFRunLoopBeforeWaiting, true, 2500000,
+        ^(CFRunLoopObserverRef obs, CFRunLoopActivity activity) {
+            [weakSelf afterCommit];
+        });
+    CFRunLoopAddObserver(CFRunLoopGetMain(), _postCommitObserver, kCFRunLoopCommonModes);
+}
+
+- (void)afterCommit
+{
+    if (_finished) {
+        return;
+    }
+    __weak UUIBenchHarness *weakSelf = self;
+    if (_contentDetected && _startupMs < 0) {
+        _startupMs = UUIMsSinceProcessStart();
+        _launchToContentMs = (CACurrentMediaTime() - _launchedAt) * 1000;
+        NSLog(@"[bench] content commit: startup=%.1fms launch->content=%.1fms",
+              _startupMs, _launchToContentMs);
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)),
+                       dispatch_get_main_queue(), ^{ [weakSelf tap]; });
+        return;
+    }
+    if (_updateDetectedFor <= 0) {
+        return;
+    }
+    CFTimeInterval t0 = _updateDetectedFor;
+    _updateDetectedFor = 0;
+    [_taps addObject:@((CACurrentMediaTime() - t0) * 1000)];
+    if (_tapsRemaining > 0) {
+        double delay = 0.9 + (double)arc4random_uniform(100) / 1000.0;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay * NSEC_PER_SEC)),
+                       dispatch_get_main_queue(), ^{ [weakSelf tap]; });
+    } else {
+        dispatch_async(dispatch_get_main_queue(), ^{ [weakSelf finish]; });
+    }
 }
 
 - (UIWindow *)keyWindow
@@ -182,20 +221,17 @@ static UUIBenchHarness *sharedHarness;
         return;
     }
     if (_startupMs < 0) {
+        if (_contentDetected) {
+            return;
+        }
         NSString *label = [self findLabelIn:window];
         if (!label || ![self findButtonIn:window]) {
             return;
         }
         _lastLabelText = label;
-        // Detection anchor, same rationale as the tap metric below: Valdi's
-        // own transaction containing the content has already committed.
-        _startupMs = UUIMsSinceProcessStart();
-        _launchToContentMs = (CACurrentMediaTime() - _launchedAt) * 1000;
-        NSLog(@"[bench] content frame: startup=%.1fms launch->content=%.1fms",
-              _startupMs, _launchToContentMs);
-        __weak UUIBenchHarness *weakSelf = self;
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)),
-                       dispatch_get_main_queue(), ^{ [weakSelf tap]; });
+        // The view state contains the content; this pass's commit ships it —
+        // the post-commit observer stamps startup.
+        _contentDetected = YES;
         return;
     }
     if (_pendingTapStart > 0) {
@@ -224,20 +260,10 @@ static UUIBenchHarness *sharedHarness;
                 CFTimeInterval t0 = _pendingTapStart;
                 _pendingTapStart = 0;
                 _lastLabelText = label.text;
-                [_taps addObject:@((MAX(_pendingTextAt, _pendingFrameAt) - t0) * 1000)];
-                [_tapDetails addObject:[NSString stringWithFormat:
-                    @"text+%.2f frame+%.2f turns=%ld", (_pendingTextAt - t0) * 1000,
-                    (_pendingFrameAt - t0) * 1000, (long)_pendingTurns]];
-                __weak UUIBenchHarness *weakSelf = self;
-                if (_tapsRemaining > 0) {
-                    // Randomized trigger phase: a fixed cadence can
-                    // phase-lock to the framework's render tick.
-                    double delay = 0.9 + (double)arc4random_uniform(100) / 1000.0;
-                    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay * NSEC_PER_SEC)),
-                                   dispatch_get_main_queue(), ^{ [weakSelf tap]; });
-                } else {
-                    dispatch_async(dispatch_get_main_queue(), ^{ [weakSelf finish]; });
-                }
+                [_tapDetails addObject:[NSString stringWithFormat:@"turns=%ld", (long)_pendingTurns]];
+                // The complete update is in this pass's commit; the
+                // post-commit observer stamps its handoff.
+                _updateDetectedFor = t0;
             }
         }
     }
@@ -312,6 +338,9 @@ static UUIBenchHarness *sharedHarness;
     _finished = YES;
     if (_observer) {
         CFRunLoopRemoveObserver(CFRunLoopGetMain(), _observer, kCFRunLoopCommonModes);
+    }
+    if (_postCommitObserver) {
+        CFRunLoopRemoveObserver(CFRunLoopGetMain(), _postCommitObserver, kCFRunLoopCommonModes);
     }
     NSArray<NSNumber *> *sorted = [_taps sortedArrayUsingSelector:@selector(compare:)];
     double median = sorted.count ? sorted[sorted.count / 2].doubleValue : 0;
