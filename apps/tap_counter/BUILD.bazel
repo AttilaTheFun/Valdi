@@ -1,3 +1,4 @@
+load("@build_bazel_rules_apple//apple:apple.bzl", "local_provisioning_profile")
 load("//bzl/valdi:valdi_application.bzl", "valdi_application")
 load("//bzl/valdi:valdi_module.bzl", "valdi_module")
 
@@ -19,8 +20,36 @@ valdi_module(
     ],
 )
 
+# iOS device signing (benchmark runs): the Xcode-managed development profile
+# for the shared benchmark bundle id — all cells across frameworks install
+# under one id, one at a time (free personal teams allow few app ids).
+local_provisioning_profile(
+    name = "_xcode_managed_profile",
+    profile_name = "iOS Team Provisioning Profile: com.LoganShire.UniversalUI",
+    tags = ["manual"],
+    team_id = "9CLW2BBDAG",
+)
+
+# The on-device benchmark harness (iOS): a constructor-booted, env-gated
+# runloop observer measuring commit-anchored startup/taps — see the file
+# header. alwayslink so the constructor survives static linking.
+objc_library(
+    name = "ios_bench_harness",
+    srcs = ["ios_bench/UUIBenchHarness.m"],
+    alwayslink = True,
+    sdk_frameworks = [
+        "QuartzCore",
+        "UIKit",
+    ],
+    tags = ["manual"],
+)
+
 valdi_application(
     name = "tap_counter_app",
+    ios_bundle_id = "com.LoganShire.UniversalUI",
+    ios_extra_deps = [":ios_bench_harness"],
+    ios_families = ["iphone"],
+    ios_provisioning_profile = ":_xcode_managed_profile",
     root_component_path = "App@tap_counter/TapCounter",
     title = "Tap Counter",
     version = "1.0.0",

@@ -59,6 +59,7 @@ def valdi_application(
         desktop_window_height = 800,
         desktop_window_resizable = True,
         version = None,
+        ios_extra_deps = [],
         deps = []):
     resolved_ios_bundle_id = ios_bundle_id if ios_bundle_id else "com.snap.valdi.{}".format(name)
     resolved_android_package = android_package if android_package else "com.snap.valdi.{}".format(name)
@@ -92,7 +93,7 @@ def valdi_application(
         provisioning_profile = ios_provisioning_profile,
         app_icons = ios_app_icons,
         version = version,
-        deps = get_suffixed_deps(deps, "_objc"),
+        deps = get_suffixed_deps(deps, "_objc") + ios_extra_deps,
     )
 
     valdi_android_application(
