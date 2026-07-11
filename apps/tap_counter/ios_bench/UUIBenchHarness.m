@@ -139,7 +139,7 @@ static UUIBenchHarness *sharedHarness;
         _launchToContentMs = (CACurrentMediaTime() - _launchedAt) * 1000;
         NSLog(@"[bench] content commit: startup=%.1fms launch->content=%.1fms",
               _startupMs, _launchToContentMs);
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)),
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)),
                        dispatch_get_main_queue(), ^{ [weakSelf tap]; });
         return;
     }
@@ -150,7 +150,7 @@ static UUIBenchHarness *sharedHarness;
     _updateDetectedFor = 0;
     [_taps addObject:@((CACurrentMediaTime() - t0) * 1000)];
     if (_tapsRemaining > 0) {
-        double delay = 0.9 + (double)arc4random_uniform(100) / 1000.0;
+        double delay = 0.25 + (double)arc4random_uniform(50) / 1000.0;
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay * NSEC_PER_SEC)),
                        dispatch_get_main_queue(), ^{ [weakSelf tap]; });
     } else {

@@ -35,6 +35,7 @@ local_provisioning_profile(
 # header. alwayslink so the constructor survives static linking.
 objc_library(
     name = "ios_bench_harness",
+    visibility = ["//visibility:public"],
     srcs = ["ios_bench/UUIBenchHarness.m"],
     alwayslink = True,
     sdk_frameworks = [
@@ -55,3 +56,4 @@ valdi_application(
     version = "1.0.0",
     deps = [":tap_counter"],
 )
+

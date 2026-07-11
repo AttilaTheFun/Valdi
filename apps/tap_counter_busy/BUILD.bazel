@@ -1,0 +1,40 @@
+load("@build_bazel_rules_apple//apple:apple.bzl", "local_provisioning_profile")
+load("//bzl/valdi:valdi_application.bzl", "valdi_application")
+load("//bzl/valdi:valdi_module.bzl", "valdi_module")
+
+# The "real world" busy-JS-thread variant of the counter benchmark: the same
+# counter UI (imported from //apps/tap_counter), plus a synthetic ~25%-duty
+# load on the JS thread (4 ms chunks every 16 ms) that taps must compete
+# with. The identical load runs in the React Native twin (App.tsx busy mode).
+# Own package because valdi_application generates fixed-name targets
+# (libvaldi.so) that collide within one package.
+
+valdi_module(
+    name = "tap_counter_busy",
+    srcs = glob(["**/*.tsx"]),
+    visibility = ["//visibility:public"],
+    deps = [
+        "//apps/tap_counter",
+        "//src/valdi_modules/src/valdi/valdi_core",
+        "//src/valdi_modules/src/valdi/valdi_tsx",
+    ],
+)
+
+local_provisioning_profile(
+    name = "_xcode_managed_profile",
+    profile_name = "iOS Team Provisioning Profile: com.LoganShire.UniversalUI",
+    tags = ["manual"],
+    team_id = "9CLW2BBDAG",
+)
+
+valdi_application(
+    name = "tap_counter_busy_app",
+    ios_bundle_id = "com.LoganShire.UniversalUI",
+    ios_extra_deps = ["//apps/tap_counter:ios_bench_harness"],
+    ios_families = ["iphone"],
+    ios_provisioning_profile = ":_xcode_managed_profile",
+    root_component_path = "App@tap_counter_busy/TapCounterBusy",
+    title = "Tap Counter Busy",
+    version = "1.0.0",
+    deps = [":tap_counter_busy"],
+)
