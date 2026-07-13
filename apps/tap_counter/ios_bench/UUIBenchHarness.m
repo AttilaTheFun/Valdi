@@ -27,6 +27,8 @@
  */
 
 #import <QuartzCore/QuartzCore.h>
+#import <os/signpost.h>
+#import <objc/runtime.h>
 #import <UIKit/UIKit.h>
 #import <sys/sysctl.h>
 
@@ -46,7 +48,20 @@ static double UUIMsSinceProcessStart(void)
 @interface UUIBenchHarness : NSObject
 @end
 
+static os_log_t UUIBenchSignpostLog(void) {
+    static os_log_t log;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        log = os_log_create("dev.universalui.bench", "Interaction");
+    });
+    return log;
+}
+
 @implementation UUIBenchHarness {
+    // Signpost (XCUITest interaction) mode: REAL touches open an interval at
+    // UIEvent receipt; the detected update's commit closes it.
+    BOOL _signpostMode;
+    os_signpost_id_t _signpostID;
     CFTimeInterval _launchedAt;
     double _startupMs;
     double _launchToContentMs;
@@ -84,6 +99,52 @@ static double UUIMsSinceProcessStart(void)
 }
 
 static UUIBenchHarness *sharedHarness;
+
++ (void)installSignpostIfRequested
+{
+    BOOL armed = [[NSProcessInfo processInfo].environment[@"UUI_BENCH_SIGNPOST"] isEqualToString:@"1"]
+        || [[NSProcessInfo processInfo].arguments containsObject:@"-bench-signpost"];
+    if (!armed) {
+        return;
+    }
+    sharedHarness = [[UUIBenchHarness alloc] init];
+    sharedHarness->_signpostMode = YES;
+    [sharedHarness start];
+    // In signpost mode the auto-tap/startup flow stays off: mark startup
+    // "done" so runLoopTick goes straight to update detection.
+    sharedHarness->_startupMs = 0;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        Method orig = class_getInstanceMethod(UIWindow.class, @selector(sendEvent:));
+        Method hook = class_getInstanceMethod(UIWindow.class, @selector(uuibench_sendEvent:));
+        method_exchangeImplementations(orig, hook);
+    });
+    NSLog(@"[bench] valdi interaction signpost armed");
+}
+
+/// Real-touch receipt: baseline the label, open the interval.
+- (void)realTouchEnded
+{
+    if (!_signpostMode) {
+        return;
+    }
+    UIWindow *window = [self keyWindow];
+    if (!window) {
+        return;
+    }
+    UILabel *label = [self findLabelViewIn:window];
+    _lastLabelText = label.text ?: @"";
+    _pendingFrame0 = label ? [label convertRect:label.bounds toView:nil] : CGRectZero;
+    _pendingTextAt = 0;
+    _pendingFrameAt = 0;
+    _pendingTurns = 0;
+    if (_signpostID != 0) {
+        os_signpost_interval_end(UUIBenchSignpostLog(), _signpostID, "tap");
+    }
+    _signpostID = os_signpost_id_generate(UUIBenchSignpostLog());
+    os_signpost_interval_begin(UUIBenchSignpostLog(), _signpostID, "tap");
+    _pendingTapStart = CACurrentMediaTime();
+}
 
 + (void)installIfRequested
 {
@@ -148,6 +209,14 @@ static UUIBenchHarness *sharedHarness;
     }
     CFTimeInterval t0 = _updateDetectedFor;
     _updateDetectedFor = 0;
+    if (_signpostMode) {
+        (void)t0;
+        if (_signpostID != 0) {
+            os_signpost_interval_end(UUIBenchSignpostLog(), _signpostID, "tap");
+            _signpostID = 0;
+        }
+        return;
+    }
     [_taps addObject:@((CACurrentMediaTime() - t0) * 1000)];
     if (_tapsRemaining > 0) {
         double delay = 0.25 + (double)arc4random_uniform(50) / 1000.0;
@@ -377,5 +446,24 @@ __attribute__((constructor)) static void UUIBenchBoot(void)
 {
     dispatch_async(dispatch_get_main_queue(), ^{
         [UUIBenchHarness installIfRequested];
+        [UUIBenchHarness installSignpostIfRequested];
     });
 }
+
+
+// Bench-only UIWindow sendEvent hook: real XCUITest taps open the signpost
+// interval at UIEvent receipt. Swizzled only in signpost mode.
+@implementation UIWindow (UUIBenchTouchProbe)
+- (void)uuibench_sendEvent:(UIEvent *)event
+{
+    if (event.type == UIEventTypeTouches) {
+        for (UITouch *touch in event.allTouches) {
+            if (touch.phase == UITouchPhaseEnded) {
+                [sharedHarness realTouchEnded];
+                break;
+            }
+        }
+    }
+    [self uuibench_sendEvent:event];  // swizzled: calls the original
+}
+@end
