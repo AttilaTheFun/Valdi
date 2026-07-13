@@ -12,7 +12,7 @@
         android:allowBackup="true"
         android:label="@VALDI_APP_NAME@"
         android:supportsRtl="true"
-        android:debuggable="true"
+        android:debuggable="false"
         android:theme="@style/Theme.AppCompat.Light.NoActionBar"
         @VALDI_APPLICATION_ATTRIBUTES@
     >
